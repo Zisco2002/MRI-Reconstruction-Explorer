@@ -66,14 +66,16 @@ class FFTDemo(QMainWindow):
         # MODIFIED: This will now be dynamic based on the slider
         self.current_2d_thickness_slices = 5 
 
-        self.TR_2D = 5e-3              # repetition time (sec) as the data is T1 image (assumption)
+        self.TR_2D = 0.3              # repetition time (sec) as the data is T1 image (assumption)
         self.TR_3D = 0.02              # repetition time (sec) (assumption)
-        self.noise_std = 0.01          # relative k-space noise level
+        self.noise_level_percent = 0   # Added noise percentage
 
         # Data placeholders
-        self.volume = None
+        self.base_volume = None        # The original, clean volume
+        self.noisy_volume = None       # Volume with added noise
         self.kspace_2d = None
         self.recon_2d = None
+        self.snr_2d = None
         self.kspace_3d = None
         self.recon_3d = None
         self.snr_2d = None
@@ -165,13 +167,32 @@ class FFTDemo(QMainWindow):
         self.cmap_box.currentTextChanged.connect(self.update_display)
         ctrl_layout.addWidget(self.cmap_box, 4, 1)
 
+        # --- NEW: Noise Slider ---
+        self.noise_label = QLabel(f"Added Noise: {self.noise_level_percent}%")
+        ctrl_layout.addWidget(self.noise_label, 5, 0)
+        self.noise_slider = QSlider(Qt.Horizontal)
+        self.noise_slider.setMinimum(0)
+        self.noise_slider.setMaximum(50)
+        self.noise_slider.setValue(self.noise_level_percent)
+        self.noise_slider.valueChanged.connect(self.on_noise_changed)
+        ctrl_layout.addWidget(self.noise_slider, 5, 1)
+
         # FFT buttons
         self.btn_fft2d = QPushButton("2D FFT (Simulated Thick Slice)")
         self.btn_fft2d.clicked.connect(self.on_fft2d)
-        ctrl_layout.addWidget(self.btn_fft2d, 5, 0)
+        ctrl_layout.addWidget(self.btn_fft2d, 6, 0)
         self.btn_fft3d = QPushButton("3D FFT (Full Volume)")
         self.btn_fft3d.clicked.connect(self.on_fft3d)
-        ctrl_layout.addWidget(self.btn_fft3d, 5, 1)
+        ctrl_layout.addWidget(self.btn_fft3d, 6, 1)
+
+        # Scan time and voxel size display ---
+        self.scan_time_label = QLabel("Scan Time: -")
+        self.scan_time_label.setStyleSheet("color: purple;")
+        ctrl_layout.addWidget(self.scan_time_label, 7, 0)
+
+        self.voxel_size_label = QLabel("Voxel Size (mm): - x - x -")
+        self.voxel_size_label.setStyleSheet("color: darkorange;")
+        ctrl_layout.addWidget(self.voxel_size_label, 7, 1)
 
         ctrl_box.setLayout(ctrl_layout)
         layout.addWidget(ctrl_box)
@@ -186,7 +207,7 @@ class FFTDemo(QMainWindow):
     # -----------------------------------------------------------------
     # Core logic
     # -----------------------------------------------------------------
-    def voxel_size_mm(self, mode="2D"):
+    def compute_voxel_size_mm(self, mode="2D"):
         # in-plane resolution
         vx = self.FOV_x_mm / self.resolution_x      
         vy = self.FOV_y_mm / self.resolution_y
@@ -210,7 +231,7 @@ class FFTDemo(QMainWindow):
         try:
             # Load the file
             img = nib.load('./datasets/t1_icbm_normal_1mm_pn3_rf20.mnc')
-            self.volume = img.get_fdata()
+            self.base_volume = img.get_fdata()
             
             # --- NEW: Try to get the actual base thickness from header ---
             try:
@@ -221,26 +242,70 @@ class FFTDemo(QMainWindow):
                 # Fallback if header is missing or weird
                 self.base_thickness_mm = 1.0
 
-            self.resolution_y = self.volume.shape[1]
-            self.resolution_x = self.volume.shape[2]
-            self.nslices = self.volume.shape[0]
+            self.resolution_y = self.base_volume.shape[1]
+            self.resolution_x = self.base_volume.shape[2]
+            self.nslices = self.base_volume.shape[0]
 
             # Update slider max now that we know nslices
             if hasattr(self, 'slice_slider'):
                  self.slice_slider.setMaximum(self.nslices - 1)
 
+            # Apply initial noise level
+            self._apply_noise()
+
             self.kspace_2d = self.recon_2d = None
             self.kspace_3d = self.recon_3d = None
-            print(f"Volume loaded. Shape: {self.volume.shape}, Base Thickness: {self.base_thickness_mm}mm")
+            print(f"Volume loaded. Shape: {self.base_volume.shape}, Base Thickness: {self.base_thickness_mm}mm")
+            print(f"Signal range: {self.base_volume.min():.2f} to {self.base_volume.max():.2f}")
 
         except Exception as e:
              print(f"Error loading volume: {e}")
              # Fallback dummy volume if file missing
-             self.volume = np.random.rand(181, 217, 181)
+             self.base_volume = np.random.rand(181, 217, 181)
              self.nslices = 181
              self.resolution_y = 217
              self.resolution_x = 181
              self.base_thickness_mm = 1.0
+             self._apply_noise()
+
+    def _apply_noise(self):
+        """Generates a noisy copy of the base volume based on the current noise level."""
+        if self.base_volume is None:
+            return
+        
+        # FIX: Scale noise relative to the signal range, not absolute percentage
+        signal_range = self.base_volume.max() - self.base_volume.min()
+        std_dev = (self.noise_level_percent / 100.0) * signal_range
+        noise = np.random.normal(0, std_dev, self.base_volume.shape)
+        self.noisy_volume = self.base_volume + noise
+        
+        print(f"Noise level: {self.noise_level_percent}%, std_dev: {std_dev:.4f}")
+
+    def calculate_snr(self, image_slice, is_normalized=False):
+        """
+        Calculates SNR from a central tissue ROI and a corner air ROI.
+        
+        FIX: Added is_normalized flag to handle normalized vs raw data differently.
+        For normalized data (0-1), we calculate SNR differently.
+        """
+        h, w = image_slice.shape
+        # Central 20x20 ROI for tissue signal
+        tissue_roi = image_slice[h//2-10:h//2+10, w//2-10:w//2+10]
+        # Top-left 30x30 ROI for background noise
+        air_roi = image_slice[0:30, 0:30]
+        
+        if is_normalized:
+            # For normalized data, use contrast-to-noise ratio approach
+            # SNR = (mean_signal - mean_background) / std_background
+            signal_mean = np.mean(tissue_roi)
+            background_mean = np.mean(air_roi)
+            background_std = np.std(air_roi)
+            snr = (signal_mean - background_mean) / (background_std + 1e-12)
+        else:
+            # For raw data: SNR = mean(signal) / std(noise)
+            snr = np.mean(tissue_roi) / (np.std(air_roi) + 1e-12)
+        
+        return max(0, snr)  # Ensure non-negative SNR
 
     # -----------------------------------------------------------------
     # Event handlers
@@ -255,6 +320,16 @@ class FFTDemo(QMainWindow):
         self.slice_label.setText(f"Slice: {self.slice_idx}")
         self.update_display()
 
+    def on_noise_changed(self, val):
+        """Handler for the noise slider."""
+        self.noise_level_percent = int(val)
+        self.noise_label.setText(f"Added Noise: {self.noise_level_percent}%")
+        self._apply_noise()
+        # Clear previous reconstructions since noise changed
+        self.kspace_2d = self.recon_2d = self.snr_2d = None
+        self.kspace_3d = self.recon_3d = self.snr_3d = None
+        self.update_display()
+
     # --- NEW: Handler for the thickness slider ---
     def on_thick_changed(self, val):
         self.current_2d_thickness_slices = int(val)
@@ -267,12 +342,15 @@ class FFTDemo(QMainWindow):
         # Update comparison labels
         self.info_3d_thick.setText(f"3D Effective Thickness: {self.base_thickness_mm:.1f} mm")
         self.info_2d_thick.setText(f"2D Physical Thickness: {physical_thickness_mm:.1f} mm")
-
+        # Update scan time / voxel info 
+        self.update_info_labels()
+        
     def on_fft2d(self):
         self.recon_3d = None
         self.kspace_3d = None
+        self.snr_3d = None
         
-        if self.volume is None:
+        if self.noisy_volume is None:
             self.info.setText("No data")
             return
         
@@ -282,10 +360,13 @@ class FFTDemo(QMainWindow):
         
         # If we are at the very last slice, just take that one slice to avoid empty array
         if self.slice_idx >= end_slice:
-             data = self.volume[self.slice_idx, :, :]
+             data = self.noisy_volume[self.slice_idx, :, :]
         else:
              # Average the slices to simulate a thicker physical 2D acquisition
-             data = np.mean(self.volume[self.slice_idx : end_slice, :, :], axis=0)
+             data = np.mean(self.noisy_volume[self.slice_idx : end_slice, :, :], axis=0)
+        
+        # FIX: Calculate SNR on raw data BEFORE normalization
+        snr_raw = self.calculate_snr(data, is_normalized=False)
         
         k = np.fft.fft2(data)
         k = np.fft.fftshift(k)
@@ -293,36 +374,46 @@ class FFTDemo(QMainWindow):
         # Inverse FFT
         recon = np.fft.ifft2(np.fft.ifftshift(k))
         recon = np.abs(recon)
-        recon = (recon - recon.min()) / (recon.max() - recon.min() + 1e-12)
+        
+        # Normalize for display
+        recon_normalized = (recon - recon.min()) / (recon.max() - recon.min() + 1e-12)
 
         self.kspace_2d = k
-        self.recon_2d = recon
+        self.recon_2d = recon_normalized
+        self.snr_2d = snr_raw
 
-        self.info.setText(f"2D FFT done. Simulated {self.current_2d_thickness_slices*self.base_thickness_mm:.1f}mm slice.")
+        self.info.setText(f"2D FFT done. Simulated {self.current_2d_thickness_slices*self.base_thickness_mm:.1f}mm slice. SNR: {self.snr_2d:.1f}")
         self.update_display()
 
     def on_fft3d(self):
         self.recon_2d = None
         self.kspace_2d = None
+        self.snr_2d = None
         
-        if self.volume is None:
+        if self.noisy_volume is None:
             self.info.setText("No data")
             return
 
         self.info.setText("Running 3D FFT... please wait...")
         QApplication.processEvents() # Keep UI responsive-ish
 
-        k = np.fft.fftn(self.volume)
+        k = np.fft.fftn(self.noisy_volume)
         k = np.fft.fftshift(k)
         
         recon = np.fft.ifftn(np.fft.ifftshift(k))
         recon = np.abs(recon)
-        recon = (recon - recon.min()) / (recon.max() - recon.min() + 1e-12)
+        
+        # FIX: Calculate SNR on raw reconstruction BEFORE normalization
+        snr_raw = self.calculate_snr(recon[self.slice_idx], is_normalized=False)
+        
+        # Normalize for display
+        recon_normalized = (recon - recon.min()) / (recon.max() - recon.min() + 1e-12)
 
         self.kspace_3d = k
-        self.recon_3d = recon
+        self.recon_3d = recon_normalized
+        self.snr_3d = snr_raw
         
-        self.info.setText(f"3D FFT done. Effective slice thickness: {self.base_thickness_mm:.1f}mm")
+        self.info.setText(f"3D FFT done. Effective slice thickness: {self.base_thickness_mm:.1f}mm. SNR: {self.snr_3d:.1f}")
         self.update_display()
 
     # -----------------------------------------------------------------
@@ -330,11 +421,16 @@ class FFTDemo(QMainWindow):
     # -----------------------------------------------------------------
     def update_display(self):
         cmap = self.cmap_box.currentText()
-        if self.volume is not None:
-            # Show the current single slice as the "Ground Truth" reference
-            img = self.volume[self.slice_idx]
-            self.canvas_img.plot(img, title=f"Original Phantom (Slice {self.slice_idx})", cmap=cmap)
-
+        if self.noisy_volume is not None:
+            # Show the current single slice of the *noisy* volume as the input reference
+            img = self.base_volume[self.slice_idx]
+            # Normalize for display
+            img_normalized = (img - img.min()) / (img.max() - img.min() + 1e-12)
+            self.canvas_img.plot(img_normalized, title=f"Input Phantom (Slice {self.slice_idx})", cmap=cmap)
+        
+        # Update scan time / voxel size labels
+        self.update_info_labels()
+        
         if self.kspace_2d is not None:
             mag = np.log(1 + np.abs(self.kspace_2d))
             mag = (mag - mag.min()) / (mag.max() - mag.min() + 1e-12)
@@ -347,11 +443,40 @@ class FFTDemo(QMainWindow):
             self.canvas_k.plot(np.zeros((self.resolution_y, self.resolution_x)), title="K-space", cmap=cmap)
 
         if self.recon_2d is not None:
-            self.canvas_recon.plot(self.recon_2d, title=f"2D Recon (Simulated {self.current_2d_thickness_slices*self.base_thickness_mm:.0f}mm thick)", cmap=cmap)
+            title = f"2D Recon ({self.current_2d_thickness_slices*self.base_thickness_mm:.0f}mm thick) | SNR: {self.snr_2d:.1f}"
+            self.canvas_recon.plot(self.recon_2d, title=title, cmap=cmap)
         elif self.recon_3d is not None:
-            self.canvas_recon.plot(self.recon_3d[self.slice_idx], title=f"3D Recon (Effective {self.base_thickness_mm:.0f}mm thick)", cmap=cmap)
+            # FIX: Recalculate SNR for the current slice being displayed
+            # Use the stored raw reconstruction if available, otherwise use normalized
+            snr_current = self.calculate_snr(self.recon_3d[self.slice_idx], is_normalized=True)
+            title = f"3D Recon ({self.base_thickness_mm:.0f}mm thick) | SNR: {snr_current:.1f}"
+            self.canvas_recon.plot(self.recon_3d[self.slice_idx], title=title, cmap=cmap)
         else:
             self.canvas_recon.plot(np.zeros((self.resolution_y, self.resolution_x)), title="Reconstruction", cmap=cmap)
+
+    def update_info_labels(self):
+        """Compute and update scan time and voxel size labels for both 2D and 3D modes."""
+        try:
+            # compute scan times
+            self.compute_scan_time(mode="2D")
+            self.compute_scan_time(mode="3D")
+
+            # compute voxel sizes (vx, vy, vz) in mm
+            vx2, vy2, vz2 = self.compute_voxel_size_mm(mode="2D")
+            vx3, vy3, vz3 = self.compute_voxel_size_mm(mode="3D")
+
+            # Format times (seconds) and voxel sizes
+            t2 = getattr(self, 'scan_time_2d', None)
+            t3 = getattr(self, 'scan_time_3d', None)
+            t2m = f"{t2/60:.0f}m" if t2 is not None else "-"
+            t3m = f"{t3/60:.0f}m" if t3 is not None else "-"
+
+            self.scan_time_label.setText(f"Scan Time 2D/3D: {t2m} / {t3m}")
+            self.voxel_size_label.setText(f"Voxel (2D): {vx2:.2f} x {vy2:.2f} x {vz2:.2f} mm  |  (3D): {vx3:.2f} x {vy3:.2f} x {vz3:.2f} mm")
+        except Exception:
+            # safe fallback
+            self.scan_time_label.setText("Scan Time: -")
+            self.voxel_size_label.setText("Voxel Size (mm): - x - x -")
 
 # ---------------------------------------------------------------------
 # Main
