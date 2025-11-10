@@ -56,14 +56,18 @@ class FFTDemo(QMainWindow):
         self.nslices = 0                           
 
         # MRI-like physical parameters
-        self.FOV_mm = 220.0            # Field of view (mm)
+        # Practically, FOV is choosed clinically but our data resolution is 1*1*1 mm so we set FOV as the slice shape
+        # FOV = DELTA_X * Nx
+        self.FOV_x_mm = 181.0           # Field of view (mm)  
+        self.FOV_y_mm = 217.0           # Field of view (mm)
         
         # NEW: Base thickness of the loaded 3D volume (native resolution)
         self.base_thickness_mm = 1.0   
         # MODIFIED: This will now be dynamic based on the slider
         self.current_2d_thickness_slices = 5 
 
-        self.TR = 5e-3                 # repetition time (s)
+        self.TR_2D = 5e-3              # repetition time (sec) as the data is T1 image (assumption)
+        self.TR_3D = 0.02              # repetition time (sec) (assumption)
         self.noise_std = 0.01          # relative k-space noise level
 
         # Data placeholders
@@ -76,6 +80,7 @@ class FFTDemo(QMainWindow):
         self.snr_3d = None
         self.scan_time_2d = None
         self.scan_time_3d = None
+        self.averages = 2          # number of capturing all the scan (assumption)
 
         # Build UI and generate volume
         self.generate_volume()
@@ -181,10 +186,26 @@ class FFTDemo(QMainWindow):
     # -----------------------------------------------------------------
     # Core logic
     # -----------------------------------------------------------------
-    def voxel_size_mm(self):
-        # Simplified for this demo
-        return 1.0, 1.0, self.base_thickness_mm
-
+    def voxel_size_mm(self, mode="2D"):
+        # in-plane resolution
+        vx = self.FOV_x_mm / self.resolution_x      
+        vy = self.FOV_y_mm / self.resolution_y
+        # Through-plane resolution
+        if(mode == "2D"): 
+            vz = self.current_2d_thickness_slices  
+        else:
+            vz = self.base_thickness_mm
+        return vx, vy, vz
+        
+    
+    def compute_scan_time(self, mode="2D"):
+        Ny = self.resolution_y
+        Nz = self.nslices
+        if mode == "2D":
+            self.scan_time_2d = Ny * (self.nslices / self.current_2d_thickness_slices) * self.TR_2D * self.averages
+        else:
+            self.scan_time_3d =  Ny * Nz * self.TR_3D * self.averages
+        
     def generate_volume(self):
         try:
             # Load the file
