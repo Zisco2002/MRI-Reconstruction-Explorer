@@ -78,6 +78,12 @@ class SimpleCanvas(FigureCanvasQTAgg):
         self.axes.set_facecolor('#000000')
         super(SimpleCanvas, self).__init__(fig)
         self.setParent(parent)
+        # Prefer expanding so layouts can give more space to canvases
+        try:
+            from PyQt5.QtWidgets import QSizePolicy
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        except Exception:
+            pass
 
     def plot(self, data, title="", cmap='gray'):
         self.axes.clear()
@@ -137,8 +143,11 @@ class FFTDemo(QMainWindow):
         # --- Left Panel: Controls ---
         left_panel_widget = QWidget()
         controls_panel_layout = QVBoxLayout(left_panel_widget)
-        controls_panel_layout.setSpacing(15)
-        
+        # increase spacing between widgets in the sidebar for better separation
+        controls_panel_layout.setSpacing(32)
+        # give some content margins so elements are not flush to the container edges
+        controls_panel_layout.setContentsMargins(20, 20, 20, 20)
+
         header = QLabel("MRI Reconstruction Controls")
         header.setFont(QFont('Arial', 24, QFont.Bold))
         header.setAlignment(Qt.AlignCenter)
@@ -147,6 +156,8 @@ class FFTDemo(QMainWindow):
         # Group 1: Data & Slice Info
         data_group = QGroupBox("Data & Slice")
         data_layout = QGridLayout()
+        data_layout.setSpacing(16)
+        data_layout.setContentsMargins(30, 30, 30, 30)
         self.btn_gen = QPushButton("Reload Volume")
         self.btn_gen.clicked.connect(self.on_generate)
         self.btn_gen.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred) 
@@ -167,6 +178,8 @@ class FFTDemo(QMainWindow):
         # Group 2: Scan Parameters
         params_group = QGroupBox("Scan Parameters")
         params_layout = QGridLayout()
+        params_layout.setSpacing(16)
+        params_layout.setContentsMargins(30, 30, 30, 30)
         self.thick_label = QLabel(f'Sim. 2D Thickness: {self.current_2d_thickness_slices} slices')
         params_layout.addWidget(self.thick_label, 0, 0)
         self.thick_slider = QSlider(Qt.Horizontal)
@@ -197,7 +210,9 @@ class FFTDemo(QMainWindow):
         # Group 3: Reconstruction Buttons
         recon_group = QGroupBox("Reconstruction")
         recon_layout = QVBoxLayout()
-        recon_layout.setSpacing(10)
+        # slightly increase spacing inside the reconstruction buttons group
+        recon_layout.setSpacing(18)
+        recon_layout.setContentsMargins(30, 30, 30, 30)
         self.btn_fft2d = QPushButton("Run 2D FFT (Sim. Thick Slice)")
         self.btn_fft2d.clicked.connect(self.on_fft2d)
         recon_layout.addWidget(self.btn_fft2d)
@@ -216,6 +231,8 @@ class FFTDemo(QMainWindow):
         # Group 4: Info & Status
         info_group = QGroupBox("Info & Status")
         info_layout = QVBoxLayout()
+        info_layout.setSpacing(16)
+        info_layout.setContentsMargins(30, 30, 30, 30)
         self.info_2d_thick = QLabel("2D Physical Thickness: -")
         self.info_3d_thick = QLabel("3D Effective Thickness: -")
         self.voxel_size_label = QLabel("Voxel Size (2D): -")
@@ -232,35 +249,37 @@ class FFTDemo(QMainWindow):
         controls_panel_layout.addWidget(info_group)
         
         controls_panel_layout.addStretch(2)
-        
-        # Set minimum width on the left panel's container widget
-        left_panel_widget.setMinimumWidth(500)
-        main_layout.addWidget(left_panel_widget, 2) # Panel takes 2 parts
+
+        # Set a smaller minimum width on the left panel so the canvases can be larger
+        left_panel_widget.setMinimumWidth(300)
+        # Give the left panel a smaller stretch and the right panel (canvases) a larger stretch
+        main_layout.addWidget(left_panel_widget, 1) # Panel takes 1 part
 
         # Right Panel: (2 * 2 Grid)
         right_panel_widget = QWidget()
         canvas_panel_layout = QVBoxLayout(right_panel_widget)
         canvas_panel_layout.setSpacing(10)
-        
+
         # Top Row: Input + Reconstructed Images
         top_row_layout = QHBoxLayout()
-        self.img_input = SimpleCanvas(self, width=5, height=5)
-        self.img_reconstructed = SimpleCanvas(self, width=5, height=5)
+        # Larger canvas defaults so images render bigger by default
+        self.img_input = SimpleCanvas(self, width=7, height=7)
+        self.img_reconstructed = SimpleCanvas(self, width=7, height=7)
         top_row_layout.addWidget(self.img_input, 1)
         top_row_layout.addWidget(self.img_reconstructed, 1)
-        
+
         canvas_panel_layout.addLayout(top_row_layout, 1)
 
         # Bottom Row: Input + Reconstructed K-Space
         bottom_row_layout = QHBoxLayout()
-        self.canvas_k_space_input = SimpleCanvas(self, width=5, height=5)
-        self.canvas_k_space_reconstructed = SimpleCanvas(self, width=5, height=5)
+        self.canvas_k_space_input = SimpleCanvas(self, width=7, height=7)
+        self.canvas_k_space_reconstructed = SimpleCanvas(self, width=7, height=7)
         bottom_row_layout.addWidget(self.canvas_k_space_input, 1)
         bottom_row_layout.addWidget(self.canvas_k_space_reconstructed, 1)
 
         canvas_panel_layout.addLayout(bottom_row_layout, 1)
-        
-        main_layout.addWidget(right_panel_widget, 3)
+
+        main_layout.addWidget(right_panel_widget, 4)
 
     def _setup_styles(self):
         """Applies a global CSS stylesheet"""
