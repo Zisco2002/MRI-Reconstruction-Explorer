@@ -16,50 +16,59 @@ from matplotlib.figure import Figure
 # NIBabel for loading medical images
 import nibabel as nib
 
+# Main logic class that contains static methods for reconstruction calculation and applying noise
 class MRILogic:
     @staticmethod
-    def apply_noise(base_volume, noise_level_percent):
-        if base_volume is None: return None
-        signal_range = base_volume.max() - base_volume.min()
-        std_dev = (noise_level_percent / 100.0) * signal_range
-        noise = np.random.normal(0, std_dev, base_volume.shape)
-        return base_volume + noise
+    # Reconstructs a 2D slice using its full k-space data
+    def reconstruct_2d(data_slice):
+        k_space = np.fft.fft2(data_slice)              # Converts data from pixel space to k-space (frequencies) using a 2D Fast Fourier Transform
+        k_space_shifted = np.fft.fftshift(k_space)     # Shifts brightest part (0,0 frequency) into the center of the matrix for visualization
+        reconstruction = np.fft.ifft2(np.fft.ifftshift(k_space_shifted)) # Converts shifted k-space back to spaital domain (Image pixels data) using inverse fourier
+        reconstruction_magnitude = np.abs(reconstruction) # Generates a single array of real magnitude pixel values from the complex numbers, needed for viewing the image
+        return k_space_shifted, reconstruction_magnitude
 
     @staticmethod
+    # Same as 2D reconstruction but it undersamples the k-space with respect to acceleration factor
+    def reconstruct_2d_aliased(data_slice, acceleration_factor = 2):
+        k_full_shifted = np.fft.fftshift(np.fft.fft2(data_slice))
+        k_aliased_shifted = np.zeros_like(k_full_shifted) # New k-space with same size as input k-space, filled with zeros
+        k_aliased_shifted[ : : acceleration_factor, :] = k_full_shifted[ : : acceleration_factor, :] # Copy every second row to new k-space, leaving rows (1, 3, 5, ..) zeros
+        reconstruction_aliased = np.fft.ifft2(np.fft.ifftshift(k_aliased_shifted))
+        reconstruction_aliased_magnitude = np.abs(reconstruction_aliased)
+        return k_aliased_shifted, reconstruction_aliased_magnitude
+
+    @staticmethod
+    # Reconstructs whole 3D volume
+    def reconstruct_3d(volume):
+        k_space = np.fft.fftn(volume) # Performs 3D FFT to convert 3D volume to 3D k-space
+        k_space_shifted = np.fft.fftshift(k_space)
+        reconstruction = np.fft.ifftn(np.fft.ifftshift(k_space_shifted))
+        reconstruction_magnitude = np.abs(reconstruction)
+        return k_space_shifted, reconstruction_magnitude
+
+    @staticmethod
+    # Simulates adding gaussian noise to the data
+    def apply_noise(base_volume, noise_level_percent):
+        if base_volume is None: 
+            return None
+        signal_range = base_volume.max() - base_volume.min()    # Brightest - Darkest pixel in the volume
+        std_dev = (noise_level_percent / 100.0) * signal_range  # Scales standard deviation relative to our signal range
+        noise = np.random.normal(0, std_dev, base_volume.shape) # Generates an array of same shape as our volume, containing gaussian noise
+        noisy_volume = base_volume + noise
+        return noisy_volume
+
+    @staticmethod
+    # Calculates signal to noise ratio for a single 2D slice
     def calculate_snr(image_slice):
-        h, w = image_slice.shape
-        if h < 40 or w < 40: return 0
-        tissue_roi = image_slice[h//2-10:h//2+10, w//2-10:w//2+10]
-        air_roi = image_slice[0:30, 0:30]
-        noise_std = np.std(air_roi) + 1e-12 
+        height, width = image_slice.shape
+        if height < 40 or width < 40: # Image is too small to draw a ROI
+            return 0
+        tissue_roi = image_slice[height // 2 - 10 : height // 2 + 10, width // 2 - 10 : width // 2 + 10] # Slices out a 20 * 20 ROI from the center of our image to indicate signal
+        air_roi = image_slice[0 : 30, 0 : 30] # Slices out a 30 * 30 ROI from the top left of our image to indicate background air (noise)
+        noise_std = np.std(air_roi) + 1e-12  # Calculates standard deviation for all pixel values in our background ROI, then adds a small amount to each value to avoid zeros
         signal_mean = np.mean(tissue_roi)
         snr = signal_mean / noise_std
         return max(0, snr)
-
-    @staticmethod
-    def reconstruct_2d(data_slice):
-        k = np.fft.fft2(data_slice)
-        k_shifted = np.fft.fftshift(k)
-        recon = np.fft.ifft2(np.fft.ifftshift(k_shifted))
-        recon_magnitude = np.abs(recon)
-        return k_shifted, recon_magnitude
-
-    @staticmethod
-    def reconstruct_2d_aliased(data_slice, R=2):
-        k_full_shifted = np.fft.fftshift(np.fft.fft2(data_slice))
-        k_aliased_shifted = np.zeros_like(k_full_shifted)
-        k_aliased_shifted[::R, :] = k_full_shifted[::R, :]
-        recon_aliased = np.fft.ifft2(np.fft.ifftshift(k_aliased_shifted))
-        recon_aliased_magnitude = np.abs(recon_aliased)
-        return k_aliased_shifted, recon_aliased_magnitude
-
-    @staticmethod
-    def reconstruct_3d(volume):
-        k = np.fft.fftn(volume)
-        k_shifted = np.fft.fftshift(k)
-        recon = np.fft.ifftn(np.fft.ifftshift(k_shifted))
-        recon_magnitude = np.abs(recon)
-        return k_shifted, recon_magnitude
 
 # Canvas Helper Class
 class SimpleCanvas(FigureCanvasQTAgg):
@@ -81,7 +90,7 @@ class SimpleCanvas(FigureCanvasQTAgg):
 class FFTDemo(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MRI 2D vs 3D FFT & Aliasing Demo")
+        self.setWindowTitle("MRI 2D vs 3D FFT Demo")
         self.setGeometry(100, 100, 1400, 800)
 
         # --- Data Placeholders (State) ---
@@ -89,18 +98,18 @@ class FFTDemo(QMainWindow):
         self.noisy_volume = None
         self.kspace_2d = None
         self.kspace_3d = None
-        self.recon_2d_norm = None
-        self.recon_3d_norm = None
-        self.recon_3d_raw = None
+        self.reconstruction_2d_norm = None
+        self.reconstruction_3d_norm = None
+        self.reconstruction_3d_raw = None
         self.snr_2d = None
         self.snr_3d = None
-        self.current_recon_mode = "None"
+        self.current_reconstruction_mode = "None"
 
         # --- UI State Parameters ---
         self.slice_idx = 0
         self.resolution_x = 64
         self.resolution_y = 64
-        self.nslices = 50                       
+        self.slices_num = 50                       
         
         # --- MRI Physics Parameters (State) ---
         self.FOV_x_mm = 181.0
@@ -135,7 +144,7 @@ class FFTDemo(QMainWindow):
         header.setAlignment(Qt.AlignCenter)
         controls_panel_layout.addWidget(header)
 
-        # Group 1: Data & Slice
+        # Group 1: Data & Slice Info
         data_group = QGroupBox("Data & Slice")
         data_layout = QGridLayout()
         self.btn_gen = QPushButton("Reload Volume")
@@ -146,7 +155,7 @@ class FFTDemo(QMainWindow):
         data_layout.addWidget(self.slice_label, 1, 0)
         self.slice_slider = QSlider(Qt.Horizontal)
         self.slice_slider.setMinimum(0)
-        self.slice_slider.setMaximum(self.nslices - 1)
+        self.slice_slider.setMaximum(self.slices_num - 1)
         self.slice_slider.setValue(self.slice_idx)
         self.slice_slider.valueChanged.connect(self.on_slice_changed)
         data_layout.addWidget(self.slice_slider, 1, 1)
@@ -185,7 +194,7 @@ class FFTDemo(QMainWindow):
         
         controls_panel_layout.addStretch(1)
 
-        # Group 3: Reconstruction
+        # Group 3: Reconstruction Buttons
         recon_group = QGroupBox("Reconstruction")
         recon_layout = QVBoxLayout()
         recon_layout.setSpacing(10)
@@ -228,34 +237,33 @@ class FFTDemo(QMainWindow):
         left_panel_widget.setMinimumWidth(500)
         main_layout.addWidget(left_panel_widget, 2) # Panel takes 2 parts
 
-        # --- Right Panel: Canvases (2x2 Grid) ---
+        # Right Panel: (2 * 2 Grid)
         right_panel_widget = QWidget()
         canvas_panel_layout = QVBoxLayout(right_panel_widget)
         canvas_panel_layout.setSpacing(10)
         
-        # Top Row: Input + Recon
+        # Top Row: Input + Reconstructed Images
         top_row_layout = QHBoxLayout()
-        self.canvas_img = SimpleCanvas(self, width=5, height=5)
-        self.canvas_recon = SimpleCanvas(self, width=5, height=5)
-        top_row_layout.addWidget(self.canvas_img, 1)
-        top_row_layout.addWidget(self.canvas_recon, 1)
+        self.img_input = SimpleCanvas(self, width=5, height=5)
+        self.img_reconstructed = SimpleCanvas(self, width=5, height=5)
+        top_row_layout.addWidget(self.img_input, 1)
+        top_row_layout.addWidget(self.img_reconstructed, 1)
         
         canvas_panel_layout.addLayout(top_row_layout, 1)
 
-        # Bottom Row: Input K-Space + Recon K-Space
+        # Bottom Row: Input + Reconstructed K-Space
         bottom_row_layout = QHBoxLayout()
-        self.canvas_k_input = SimpleCanvas(self, width=5, height=5) # NEW
-        self.canvas_k_recon = SimpleCanvas(self, width=5, height=5) # Renamed
-        bottom_row_layout.addWidget(self.canvas_k_input, 1)
-        bottom_row_layout.addWidget(self.canvas_k_recon, 1)
+        self.canvas_k_space_input = SimpleCanvas(self, width=5, height=5)
+        self.canvas_k_space_reconstructed = SimpleCanvas(self, width=5, height=5)
+        bottom_row_layout.addWidget(self.canvas_k_space_input, 1)
+        bottom_row_layout.addWidget(self.canvas_k_space_reconstructed, 1)
 
-        canvas_panel_layout.addLayout(bottom_row_layout, 1) # Add new row
+        canvas_panel_layout.addLayout(bottom_row_layout, 1)
         
-        main_layout.addWidget(right_panel_widget, 3) # Canvases take 3 parts
+        main_layout.addWidget(right_panel_widget, 3)
 
     def _setup_styles(self):
-        """Applies a global CSS stylesheet (Aggressively larger sizes)."""
-        # This stylesheet is unchanged, but will now work correctly
+        """Applies a global CSS stylesheet"""
         self.setStyleSheet("""
             QMainWindow, QWidget {
                 background-color: #1e1e1e; color: #dddddd; font-family: Arial;
@@ -321,12 +329,13 @@ class FFTDemo(QMainWindow):
         self.info.setStyleSheet("color: #E0E034;")
 
 
-    # Core Logic (State Management)
+    # Core Logic Methods
     def compute_voxel_size_mm(self, mode="2D"):
-        if self.resolution_x == 0 or self.resolution_y == 0: return 0, 0, 0
+        if self.resolution_x == 0 or self.resolution_y == 0: 
+            return 0, 0, 0
         vx = self.FOV_x_mm / self.resolution_x      
         vy = self.FOV_y_mm / self.resolution_y
-        if(mode == "2D"): 
+        if (mode == "2D"): 
             vz = self.current_2d_thickness_slices * self.base_thickness_mm
         else:
             vz = self.base_thickness_mm
@@ -334,7 +343,7 @@ class FFTDemo(QMainWindow):
         
     def compute_scan_time(self, mode="2D"):
         Ny = self.resolution_y
-        Nz = self.nslices
+        Nz = self.slices_num
         if mode == "2D":
             time = self.TR_2D * Ny * (Nz / self.current_2d_thickness_slices) * self.averages
             self.scan_time_2d = time
@@ -347,10 +356,10 @@ class FFTDemo(QMainWindow):
             img = nib.load('./datasets/t1_icbm_normal_1mm_pn3_rf20.mnc')
             self.base_volume = img.get_fdata()
             self.base_thickness_mm = img.header.get_zooms()[0]
-            self.nslices, self.resolution_y, self.resolution_x = self.base_volume.shape
+            self.slices_num, self.resolution_y, self.resolution_x = self.base_volume.shape
             
             if hasattr(self, 'slice_slider'):
-                 self.slice_slider.setMaximum(self.nslices - 1)
+                 self.slice_slider.setMaximum(self.slices_num - 1)
             
             self._apply_noise()
             print(f"Volume loaded. Shape: {self.base_volume.shape}, Base Thickness: {self.base_thickness_mm}mm")
@@ -358,13 +367,13 @@ class FFTDemo(QMainWindow):
         except Exception as e:
              print(f"Error loading volume: {e}. Creating dummy data.")
              self.base_volume = np.random.rand(50, 64, 64)
-             self.nslices, self.resolution_y, self.resolution_x = self.base_volume.shape
+             self.slices_num, self.resolution_y, self.resolution_x = self.base_volume.shape
              self.base_thickness_mm = 1.0
              self._apply_noise()
              if hasattr(self, 'slice_slider'):
-                 self.slice_slider.setMaximum(self.nslices - 1)
+                 self.slice_slider.setMaximum(self.slices_num - 1)
         
-        self.kspace_2d = self.recon_2d_norm = self.kspace_3d = self.recon_3d_norm = None
+        self.kspace_2d = self.reconstruction_2d_norm = self.kspace_3d = self.reconstruction_3d_norm = None
 
     def _apply_noise(self):
         self.noisy_volume = MRILogic.apply_noise(self.base_volume, self.noise_level_percent)
@@ -374,11 +383,20 @@ class FFTDemo(QMainWindow):
         if self.noisy_volume is None: 
             # Return a blank array if no data, to avoid crash on launch
             return np.zeros((self.resolution_y, self.resolution_x))
-        end_slice = min(self.slice_idx + self.current_2d_thickness_slices, self.nslices)
+        end_slice = min(self.slice_idx + self.current_2d_thickness_slices, self.slices_num)
         if self.slice_idx >= end_slice:
              return self.noisy_volume[self.slice_idx, :, :]
         else:
              return np.mean(self.noisy_volume[self.slice_idx : end_slice, :, :], axis=0)
+    
+    def _get_clean_thick_slice(self):
+        if self.base_volume is None: 
+            return np.zeros((self.resolution_y, self.resolution_x))
+        end_slice = min(self.slice_idx + self.current_2d_thickness_slices, self.slices_num)
+        if self.slice_idx >= end_slice:
+             return self.base_volume[self.slice_idx, :, :]
+        else:
+             return np.mean(self.base_volume[self.slice_idx : end_slice, :, :], axis=0)
 
     # Event Handlers
     def on_generate(self):
@@ -405,7 +423,7 @@ class FFTDemo(QMainWindow):
         self.update_info_labels()
         
     def on_fft2d(self):
-        self.current_recon_mode = "2D"
+        self.current_reconstruction_mode = "2D"
         self._clear_3d_data()
         data_slice = self._get_thick_slice()
         if data_slice is None: return
@@ -414,28 +432,28 @@ class FFTDemo(QMainWindow):
         
         self.kspace_2d = k
         self.snr_2d = MRILogic.calculate_snr(recon)
-        self.recon_2d_norm = self._normalize(recon)
+        self.reconstruction_2d_norm = self._normalize(recon)
 
         self.info.setText(f"Status: 2D FFT done. SNR: {self.snr_2d:.1f}")
         self.update_display()
         
     def on_fft2d_alias(self):
-        self.current_recon_mode = "Alias"
+        self.current_reconstruction_mode = "Alias"
         self._clear_3d_data()
         self.snr_2d = None
         data_slice = self._get_thick_slice()
         if data_slice is None: return
 
-        k_aliased, recon_aliased = MRILogic.reconstruct_2d_aliased(data_slice, R=2)
+        k_aliased, recon_aliased = MRILogic.reconstruct_2d_aliased(data_slice)
         
         self.kspace_2d = k_aliased
-        self.recon_2d_norm = self._normalize(recon_aliased)
+        self.reconstruction_2d_norm = self._normalize(recon_aliased)
 
-        self.info.setText(f"Status: 2D FFT with Aliasing (R=2).")
+        self.info.setText(f"Status: 2D FFT with Aliasing (acceleration factor = 2)")
         self.update_display()
 
     def on_fft3d(self):
-        self.current_recon_mode = "3D"
+        self.current_reconstruction_mode = "3D"
         self._clear_2d_data()
         if self.noisy_volume is None: return
 
@@ -445,8 +463,8 @@ class FFTDemo(QMainWindow):
         k, recon = MRILogic.reconstruct_3d(self.noisy_volume)
 
         self.kspace_3d = k
-        self.recon_3d_raw = recon
-        self.recon_3d_norm = self._normalize(recon)
+        self.reconstruction_3d_raw = recon
+        self.reconstruction_3d_norm = self._normalize(recon)
         self.snr_3d = MRILogic.calculate_snr(recon[self.slice_idx])
         
         self.info.setText(f"Status: 3D FFT done. SNR: {self.snr_3d:.1f}")
@@ -461,49 +479,52 @@ class FFTDemo(QMainWindow):
         self._clear_3d_data()
 
     def _clear_2d_data(self):
-        self.kspace_2d = self.recon_2d_norm = self.snr_2d = None
+        self.kspace_2d = self.reconstruction_2d_norm = self.snr_2d = None
 
     def _clear_3d_data(self):
-        self.kspace_3d = self.recon_3d_norm = self.snr_3d = self.recon_3d_raw = None
+        self.kspace_3d = self.reconstruction_3d_norm = self.snr_3d = self.reconstruction_3d_raw = None
 
     def update_display(self):
         """The main plotting function. Redraws all 4 canvases."""
         cmap = self.cmap_box.currentText()
         
-        # Plot Input Phantom (Top-Left)
+        # Plot Input Phantom Image (Top-Left)
         if self.base_volume is not None:
             img = self.base_volume[self.slice_idx, :, :]
-            self.canvas_img.plot(self._normalize(img), title=f"Input Phantom (Slice {self.slice_idx})", cmap=cmap)
+            self.img_input.plot(self._normalize(img), title=f"Input Phantom (Slice {self.slice_idx})", cmap=cmap)
         else:
-             self.canvas_img.plot(np.zeros((self.resolution_y, self.resolution_x)), title="Input Phantom", cmap=cmap)
+             self.img_input.plot(np.zeros((self.resolution_y, self.resolution_x)), title="Input Phantom", cmap=cmap)
         
-        # Plot Reconstruction (Top-Right)
-        if self.recon_2d_norm is not None and self.current_recon_mode in ["2D", "Alias"]:
-            title = "2D Recon (ALIased)" if self.current_recon_mode == "Alias" else f"2D Recon | SNR: {self.snr_2d:.1f}"
-            self.canvas_recon.plot(self.recon_2d_norm, title=title, cmap=cmap)
-        elif self.recon_3d_norm is not None and self.current_recon_mode == "3D":
-            snr_current_slice = MRILogic.calculate_snr(self.recon_3d_raw[self.slice_idx])
-            title = f"3D Recon | SNR: {snr_current_slice:.1f}"
-            self.canvas_recon.plot(self.recon_3d_norm[self.slice_idx, :, :], title=title, cmap=cmap)
+        # Plot Reconstructed Image (Top-Right)
+        if self.reconstruction_2d_norm is not None and self.current_reconstruction_mode in ["2D", "Alias"]:
+            if self.current_reconstruction_mode == "Alias":
+                title = "2D Reconstruction (Aliased)"
+            else:
+                title = f"2D Reconstruction | SNR: {self.snr_2d:.1f}"
+            self.img_reconstructed.plot(self.reconstruction_2d_norm, title=title, cmap=cmap)
+        elif self.reconstruction_3d_norm is not None and self.current_reconstruction_mode == "3D":
+            snr_current_slice = MRILogic.calculate_snr(self.reconstruction_3d_raw[self.slice_idx])
+            title = f"3D Reconstruction | SNR: {snr_current_slice:.1f}"
+            self.img_reconstructed.plot(self.reconstruction_3d_norm[self.slice_idx, :, :], title=title, cmap=cmap)
         else:
-            self.canvas_recon.plot(np.zeros((self.resolution_y, self.resolution_x)), title="Reconstruction", cmap=cmap)
+            self.img_reconstructed.plot(np.zeros((self.resolution_y, self.resolution_x)), title="Reconstruction", cmap=cmap)
 
         # Plot Input K-Space (Bottom-Left) for the current input slice
-        input_slice_data = self._get_thick_slice()
+        input_slice_data = self._get_clean_thick_slice()
         k_input_shifted, _ = MRILogic.reconstruct_2d(input_slice_data)
         mag_input = np.log(1 + np.abs(k_input_shifted))
-        self.canvas_k_input.plot(self._normalize(mag_input), title="Input K-Space (Full)", cmap=cmap)
+        self.canvas_k_space_input.plot(self._normalize(mag_input), title="Input K-Space (Full)", cmap=cmap)
 
-        # Plot Recon K-Space (Bottom-Right)
-        if self.kspace_2d is not None and self.current_recon_mode in ["2D", "Alias"]:
+        # Plot Reconstructed K-Space (Bottom-Right)
+        if self.kspace_2d is not None and self.current_reconstruction_mode in ["2D", "Alias"]:
             mag = np.log(1 + np.abs(self.kspace_2d))
-            k_title = "Recon K-Space (2D)" + (" (Undersampled)" if self.current_recon_mode == "Alias" else "")
-            self.canvas_k_recon.plot(self._normalize(mag), title=k_title, cmap=cmap)
-        elif self.kspace_3d is not None and self.current_recon_mode == "3D":
+            k_title = "Reconstructed K-Space (2D)" + (" (Undersampled)" if self.current_reconstruction_mode == "Alias" else "")
+            self.canvas_k_space_reconstructed.plot(self._normalize(mag), title=k_title, cmap=cmap)
+        elif self.kspace_3d is not None and self.current_reconstruction_mode == "3D":
             mag = np.log(1 + np.abs(self.kspace_3d[self.slice_idx, :, :]))
-            self.canvas_k_recon.plot(self._normalize(mag), title=f"Recon K-Space (3D Slice {self.slice_idx})", cmap=cmap)
+            self.canvas_k_space_reconstructed.plot(self._normalize(mag), title=f"Reconstructed K-Space (3D Slice {self.slice_idx})", cmap=cmap)
         else:
-            self.canvas_k_recon.plot(np.zeros((self.resolution_y, self.resolution_x)), title="Reconstruction K-Space", cmap=cmap)
+            self.canvas_k_space_reconstructed.plot(np.zeros((self.resolution_y, self.resolution_x)), title="Reconstruction K-Space", cmap=cmap)
 
     def update_info_labels(self):
         if self.base_volume is None: return
