@@ -18,10 +18,11 @@ import nibabel as nib
 # Canvas helper
 # ---------------------------------------------------------------------
 class SimpleCanvas(FigureCanvasQTAgg):
-    def __init__(self, parent=None, width=6, height=6, facecolor="#0b1220"):
+    def __init__(self, parent=None, width=6, height=6, facecolor="#0f1724"):
+        # modern darker canvas background to match app theme
         fig = Figure(figsize=(width, height), facecolor=facecolor)
         self.axes = fig.add_subplot(111)
-        self.axes.set_facecolor('#000000')
+        self.axes.set_facecolor('#071423')
         super(SimpleCanvas, self).__init__(fig)
         # Allow canvas to expand to take available space
         try:
@@ -41,7 +42,7 @@ class SimpleCanvas(FigureCanvasQTAgg):
                 self.axes.imshow(ov, interpolation='nearest')
             except Exception:
                 self.axes.contour(overlay, colors='r', linewidths=0.5)
-        self.axes.set_title(title, color='white', fontsize=10)
+        self.axes.set_title(title, color='white', fontsize=12)
         self.axes.axis('off')
         self.draw()
 

@@ -284,56 +284,63 @@ class FFTDemo(QMainWindow):
     def _setup_styles(self):
         """Applies a global CSS stylesheet"""
         self.setStyleSheet("""
+            /* Modern dark theme with sky-blue accents */
             QMainWindow, QWidget {
-                background-color: #1e1e1e; color: #dddddd; font-family: Arial;
+                background-color: #0f1724; /* very dark bluish */
+                color: #e6eef8; /* soft light text */
+                font-family: 'Segoe UI', Arial, sans-serif;
             }
             QGroupBox {
-                background-color: #2a2a2a; border: 1px solid #3c3c3c;
-                border-radius: 5px; margin-top: 10px;
-                font-size: 20px; /* INCREASED */
-                font-weight: bold;
+                background-color: #0b1220; /* slightly lighter panel */
+                border: 1px solid #132033; /* subtle border */
+                border-radius: 8px; margin-top: 12px;
+                font-size: 18px;
+                font-weight: 700;
+                padding: 6px; /* small padding inside the box */
             }
             QGroupBox::title {
                 subcontrol-origin: margin; subcontrol-position: top left;
-                padding: 5px 5px 8px 5px; /* Added bottom padding */
-                color: #00aaff;
+                padding: 6px 10px; /* move title off the edge */
+                color: #7dd3fc; /* sky-blue accent */
+                font-weight: 800;
             }
             QLabel { 
-                font-size: 16px; /* INCREASED */
-                color: #bbbbbb; 
+                font-size: 14px; 
+                color: #cfe8ff; 
             }
             QPushButton {
-                background-color: #007acc; color: white; border: none;
-                padding: 12px; /* INCREASED */
-                border-radius: 4px;
-                font-size: 16px; /* INCREASED */
-                font-weight: bold;
+                background-color: #06b6d4; /* teal/cyan */
+                color: #071423; /* near-black text for contrast */
+                border: none;
+                padding: 10px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 700;
             }
-            QPushButton:hover { background-color: #008be6; }
-            QPushButton:pressed { background-color: #005c99; }
-            #AliasButton { background-color: #c93c3c; }
-            #AliasButton:hover { background-color: #e04a4a; }
-            #AliasButton:pressed { background-color: #a62f2f; }
+            QPushButton:hover { background-color: #04a2b0; }
+            QPushButton:pressed { background-color: #038188; }
+            #AliasButton { background-color: #ef4444; color: white; }
+            #AliasButton:hover { background-color: #dc2626; }
+            #AliasButton:pressed { background-color: #b91c1c; }
             QSlider::groove:horizontal {
-                border: 1px solid #3c3c3c; height: 6px; /* INCREASED */
-                background: #3c3c3c; border-radius: 3px;
+                border: 1px solid #132033; height: 8px;
+                background: #132033; border-radius: 4px;
             }
             QSlider::handle:horizontal {
-                background: #00aaff; border: 1px solid #00aaff;
-                width: 22px; height: 22px; /* INCREASED */
-                margin: -8px 0; /* Adjusted margin */
-                border-radius: 11px;
+                background: #7dd3fc; border: 1px solid #7dd3fc;
+                width: 20px; height: 20px;
+                margin: -6px 0; border-radius: 10px;
             }
             QComboBox {
-                background-color: #3c3c3c; color: white; border: 1px solid #3c3c3c;
-                padding: 8px; /* INCREASED */
-                border-radius: 4px;
-                font-size: 16px; /* INCREASED */
+                background-color: #071423; color: #e6eef8; border: 1px solid #132033;
+                padding: 8px; border-radius: 6px; font-size: 14px;
             }
             QComboBox QAbstractItemView {
-                background-color: #3c3c3c; color: white; 
-                selection-background-color: #007acc;
+                background-color: #071423; color: #e6eef8; 
+                selection-background-color: #06b6d4;
             }
+            /* Make minor UI elements more muted */
+            QLabel#voxel_size_label, QLabel#voxel_size_label_3d { color: #ffd580; }
         """)
         
         # Apply special styles for info labels
