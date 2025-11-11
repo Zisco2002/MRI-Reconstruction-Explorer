@@ -123,7 +123,7 @@ class FFTDemo(QMainWindow):
         self.base_thickness_mm = 1.0
         self.current_2d_thickness_slices = 5
         self.TR_2D = 0.3
-        self.TR_3D = 0.02
+        self.TR_3D = 0.3
         self.averages = 2
         self.noise_level_percent = 0
 
@@ -517,7 +517,7 @@ class FFTDemo(QMainWindow):
         # Plot Input Phantom Image (Top-Left)
         if self.base_volume is not None:
             img = self.base_volume[self.slice_idx, :, :]
-            self.img_input.plot(self._normalize(img), title=f"Input Phantom (Slice {self.slice_idx})", cmap=cmap)
+            self.img_input.plot(self._normalize(img), title=f"Input (Slice {self.slice_idx})", cmap=cmap)
         else:
              self.img_input.plot(np.zeros((self.resolution_y, self.resolution_x)), title="Input Phantom", cmap=cmap)
         
@@ -526,11 +526,11 @@ class FFTDemo(QMainWindow):
             if self.current_reconstruction_mode == "Alias":
                 title = "2D Reconstruction (Aliased)"
             else:
-                title = f"2D Reconstruction | SNR: {self.snr_2d:.1f}"
+                title = f"2D Reconstruction"
             self.img_reconstructed.plot(self.reconstruction_2d_norm, title=title, cmap=cmap)
         elif self.reconstruction_3d_norm is not None and self.current_reconstruction_mode == "3D":
             snr_current_slice = MRILogic.calculate_snr(self.reconstruction_3d_raw[self.slice_idx])
-            title = f"3D Reconstruction | SNR: {snr_current_slice:.1f}"
+            title = f"3D Reconstruction"
             self.img_reconstructed.plot(self.reconstruction_3d_norm[self.slice_idx, :, :], title=title, cmap=cmap)
         else:
             self.img_reconstructed.plot(np.zeros((self.resolution_y, self.resolution_x)), title="Reconstruction", cmap=cmap)
