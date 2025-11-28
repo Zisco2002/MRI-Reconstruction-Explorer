@@ -63,9 +63,7 @@ class FFTDemo(QMainWindow):
         self.nslices = 0                                   
 
         # MRI-like physical parameters
-        self.FOV_mm = 220.0            # Field of view (mm)
         self.slice_thickness_mm = 5  # total slab thickness (mm)
-        self.TR = 5e-3                 # repetition time (s)
         self.noise_std = 0.01          # relative k-space noise level
 
         # Data placeholders
@@ -171,19 +169,6 @@ class FFTDemo(QMainWindow):
     # -----------------------------------------------------------------
     # Core logic
     # -----------------------------------------------------------------
-    def voxel_size_mm(self):
-        vx = self.FOV_mm / self.resolution_x
-        vy = self.FOV_mm / self.resolution_y
-        vz = np.float32(self.slice_thickness_mm) / self.nslices
-        return vx, vy, vz
-
-    def compute_scan_time(self, mode="2D"):
-        Ny = self.resolution_y
-        Nz = self.nslices
-        if mode == "2D":
-            return Ny * Nz * self.TR
-        else:
-            return Ny * self.TR
 
     def generate_volume(self):
         
