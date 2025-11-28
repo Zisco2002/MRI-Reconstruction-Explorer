@@ -415,14 +415,7 @@ class FFTDemo(QMainWindow):
         else:
              return np.mean(self.noisy_volume[self.slice_idx : end_slice, :, :], axis=0)
     
-    def _get_clean_thick_slice(self):
-        if self.base_volume is None: 
-            return np.zeros((self.resolution_y, self.resolution_x))
-        end_slice = min(self.slice_idx + self.current_2d_thickness_slices, self.slices_num)
-        if self.slice_idx >= end_slice:
-             return self.base_volume[self.slice_idx, :, :]
-        else:
-             return np.mean(self.base_volume[self.slice_idx : end_slice, :, :], axis=0)
+    
 
     # Event Handlers
     def on_generate(self):
@@ -536,7 +529,7 @@ class FFTDemo(QMainWindow):
             self.img_reconstructed.plot(np.zeros((self.resolution_y, self.resolution_x)), title="Reconstruction", cmap=cmap)
 
         # Plot Input K-Space (Bottom-Left) for the current input slice
-        input_slice_data = self._get_clean_thick_slice()
+        input_slice_data = self.base_volume[self.slice_idx, :, :]
         k_input_shifted, _ = MRILogic.reconstruct_2d(input_slice_data)
         mag_input = np.log(1 + np.abs(k_input_shifted))
         self.canvas_k_space_input.plot(self._normalize(mag_input), title="Input K-Space (Full)", cmap=cmap)
